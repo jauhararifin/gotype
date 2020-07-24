@@ -135,14 +135,8 @@ func (*astTypeGenerator) getDeclarationByName(f *ast.File, name string) *ast.Typ
 	for _, decl := range f.Decls {
 		if genDecl, ok := decl.(*ast.GenDecl); ok {
 			for _, spec := range genDecl.Specs {
-				if typeSpec, ok := spec.(*ast.TypeSpec); ok {
-					if typeSpec.Name.String() == name {
-						_, IsInterface := typeSpec.Type.(*ast.InterfaceType)
-						_, IsFunction := typeSpec.Type.(*ast.FuncType)
-						if IsInterface || IsFunction {
-							return typeSpec
-						}
-					}
+				if typeSpec, ok := spec.(*ast.TypeSpec); ok && typeSpec.Name.String() == name {
+					return typeSpec
 				}
 			}
 		}
