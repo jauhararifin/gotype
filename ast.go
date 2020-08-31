@@ -12,19 +12,24 @@ import (
 )
 
 type sourceFinder interface {
-	GetPackageSourceFiles(packagePath string) []string
+	GetPackageSourceFiles(packagePath string) ([]string, error)
 }
 
 type astTypeGenerator struct {
 	sourceFinder sourceFinder
 }
 
-func (f *astTypeGenerator) GenerateTypesFromSpecs(typeSpecs ...TypeSpec) []Type {
+func (f *astTypeGenerator) GenerateTypesFromSpecs(typeSpecs ...TypeSpec) ([]Type, error) {
 	packagePathToSpecs := f.groupTypeSpecByPackage(typeSpecs)
 
 	resultMap := make(map[TypeSpec]Type)
 	for packagePath, specs := range packagePathToSpecs {
-		for i, typ := range f.generateTypesInSinglePackage(packagePath, specs...) {
+		types, err := f.generateTypesInSinglePackage(packagePath, specs...)
+		if err != nil {
+			return nil, err
+		}
+
+		for i, typ := range types {
 			resultMap[TypeSpec{PackagePath: packagePath, Name: specs[i]}] = typ
 		}
 	}
@@ -33,7 +38,7 @@ func (f *astTypeGenerator) GenerateTypesFromSpecs(typeSpecs ...TypeSpec) []Type 
 	for _, spec := range typeSpecs {
 		results = append(results, resultMap[spec])
 	}
-	return results
+	return results, nil
 }
 
 func (f *astTypeGenerator) groupTypeSpecByPackage(typeSpecs []TypeSpec) map[string][]string {
@@ -44,8 +49,11 @@ func (f *astTypeGenerator) groupTypeSpecByPackage(typeSpecs []TypeSpec) map[stri
 	return result
 }
 
-func (f *astTypeGenerator) generateTypesInSinglePackage(packagePath string, names ...string) []Type {
-	goSources := f.sourceFinder.GetPackageSourceFiles(packagePath)
+func (f *astTypeGenerator) generateTypesInSinglePackage(packagePath string, names ...string) ([]Type, error) {
+	goSources, err := f.sourceFinder.GetPackageSourceFiles(packagePath)
+	if err != nil {
+		return nil, err
+	}
 
 	remainingNames := make(map[string]struct{})
 	for _, name := range names {
@@ -58,13 +66,20 @@ func (f *astTypeGenerator) generateTypesInSinglePackage(packagePath string, name
 			break
 		}
 
-		fileAst := f.parseAstFile(source)
+		fileAst, err := f.parseAstFile(source)
+		if err != nil {
+			return nil, err
+		}
+
 		importMap := f.generateImportMap(fileAst)
 
 		for name := range remainingNames {
 			spec := f.getDeclarationByName(fileAst, name)
 			if spec != nil {
-				resultMap[name] = f.generateTypeFromExpr(spec.Type, packagePath, importMap)
+				resultMap[name], err = f.generateTypeFromExpr(spec.Type, packagePath, importMap)
+				if err != nil {
+					return nil, err
+				}
 				delete(remainingNames, name)
 			}
 		}
@@ -73,7 +88,7 @@ func (f *astTypeGenerator) generateTypesInSinglePackage(packagePath string, name
 	if len(remainingNames) != 0 {
 		// TODO (jauhararifin): give better error message
 		for name := range remainingNames {
-			panic(fmt.Errorf("cannot find definition of %s", name))
+			return nil, fmt.Errorf("cannot find definition of %s", name)
 		}
 	}
 
@@ -82,22 +97,23 @@ func (f *astTypeGenerator) generateTypesInSinglePackage(packagePath string, name
 		results = append(results, resultMap[name])
 	}
 
-	return results
+	return results, nil
 }
 
-func (f *astTypeGenerator) parseAstFile(filename string) *ast.File {
+func (f *astTypeGenerator) parseAstFile(filename string) (*ast.File, error) {
 	file, err := os.Open(filename)
 	if err != nil {
-		panic(fmt.Errorf("cannot open file: %w", err))
+		return nil, fmt.Errorf("cannot open file: %w", err)
 	}
 	defer file.Close()
 
 	fset := token.NewFileSet()
 	fileAst, err := parser.ParseFile(fset, filepath.Base(filename), file, 0)
 	if err != nil {
-		panic(fmt.Errorf("cannot parse go code: %w", err))
+		return nil, fmt.Errorf("cannot parse go code: %w", err)
 	}
-	return fileAst
+
+	return fileAst, nil
 }
 
 func (f *astTypeGenerator) generateImportMap(file *ast.File) map[string]string {
@@ -144,34 +160,56 @@ func (*astTypeGenerator) getDeclarationByName(f *ast.File, name string) *ast.Typ
 	return nil
 }
 
-func (f *astTypeGenerator) generateTypeFromExpr(e ast.Expr, targetPkgPath string, importMap map[string]string) Type {
+func (f *astTypeGenerator) generateTypeFromExpr(
+	e ast.Expr,
+	targetPkgPath string,
+	importMap map[string]string,
+) (Type, error) {
 	switch v := e.(type) {
 	case *ast.SelectorExpr:
 		return f.generateTypeFromSelectorExpr(v, importMap)
 	case *ast.Ident:
-		return f.generateTypeFromIdent(v, targetPkgPath)
+		return f.generateTypeFromIdent(v, targetPkgPath), nil
 	case *ast.StarExpr:
-		typ := f.generateTypeFromStarExpr(v, targetPkgPath, importMap)
-		return Type{PtrType: &typ}
+		typ, err := f.generateTypeFromStarExpr(v, targetPkgPath, importMap)
+		if err != nil {
+			return Type{}, err
+		}
+		return Type{PtrType: &typ}, nil
 	case *ast.ArrayType:
 		return f.generateTypeFromArrayType(v, targetPkgPath, importMap)
 	case *ast.FuncType:
-		typ := f.generateTypeFromFuncType(v, targetPkgPath, importMap)
-		return Type{FuncType: &typ}
+		typ, err := f.generateTypeFromFuncType(v, targetPkgPath, importMap)
+		if err != nil {
+			return Type{}, err
+		}
+		return Type{FuncType: &typ}, nil
 	case *ast.MapType:
-		typ := f.generateTypeFromMapType(v, targetPkgPath, importMap)
-		return Type{MapType: &typ}
+		typ, err := f.generateTypeFromMapType(v, targetPkgPath, importMap)
+		if err != nil {
+			return Type{}, err
+		}
+		return Type{MapType: &typ}, nil
 	case *ast.ChanType:
-		typ := f.generateTypeFromChanType(v, targetPkgPath, importMap)
-		return Type{ChanType: &typ}
+		typ, err := f.generateTypeFromChanType(v, targetPkgPath, importMap)
+		if err != nil {
+			return Type{}, err
+		}
+		return Type{ChanType: &typ}, nil
 	case *ast.StructType:
-		typ := f.generateTypeFromStructType(v, targetPkgPath, importMap)
-		return Type{StructType: &typ}
+		typ, err := f.generateTypeFromStructType(v, targetPkgPath, importMap)
+		if err != nil {
+			return Type{}, err
+		}
+		return Type{StructType: &typ}, nil
 	case *ast.InterfaceType:
-		typ := f.generateTypeFromInterfaceType(v, targetPkgPath, importMap)
-		return Type{InterfaceType: &typ}
+		typ, err := f.generateTypeFromInterfaceType(v, targetPkgPath, importMap)
+		if err != nil {
+			return Type{}, err
+		}
+		return Type{InterfaceType: &typ}, nil
 	}
-	panic(fmt.Errorf("unrecognized type: %v", e))
+	return Type{}, fmt.Errorf("unrecognized type: %v", e)
 }
 
 func (f *astTypeGenerator) generateTypeFromIdent(ident *ast.Ident, packagePath string) Type {
@@ -221,76 +259,97 @@ func (f *astTypeGenerator) generateTypeFromIdent(ident *ast.Ident, packagePath s
 func (f *astTypeGenerator) generateTypeFromSelectorExpr(
 	selectorExpr *ast.SelectorExpr,
 	importMap map[string]string,
-) Type {
+) (Type, error) {
 	ident, ok := selectorExpr.X.(*ast.Ident)
 	if !ok {
-		panic(fmt.Errorf("unrecognized expr: %v", selectorExpr))
+		return Type{}, fmt.Errorf("unrecognized expr: %v", selectorExpr)
 	}
 
 	importPath, ok := importMap[ident.String()]
 	if !ok {
-		panic(fmt.Errorf("unrecognized identifier: %s", ident.String()))
+		return Type{}, fmt.Errorf("unrecognized identifier: %s", ident.String())
 	}
+
 	return Type{QualType: &QualType{
 		Package: importPath,
 		Name:    selectorExpr.Sel.String(),
-	}}
+	}}, nil
 }
 
 func (f *astTypeGenerator) generateTypeFromStarExpr(
 	starExpr *ast.StarExpr,
 	packagePath string,
 	importMap map[string]string,
-) PtrType {
-	return PtrType{Elem: f.generateTypeFromExpr(starExpr.X, packagePath, importMap)}
+) (PtrType, error) {
+	elem, err := f.generateTypeFromExpr(starExpr.X, packagePath, importMap)
+	if err != nil {
+		return PtrType{}, err
+	}
+	return PtrType{Elem: elem}, nil
 }
 
 func (f *astTypeGenerator) generateTypeFromArrayType(
 	arrayType *ast.ArrayType,
 	packagePath string,
 	importMap map[string]string,
-) Type {
+) (Type, error) {
 	if arrayType.Len == nil {
-		return Type{SliceType: &SliceType{Elem: f.generateTypeFromExpr(arrayType.Elt, packagePath, importMap)}}
+		elem, err := f.generateTypeFromExpr(arrayType.Elt, packagePath, importMap)
+		if err != nil {
+			return Type{}, err
+		}
+		return Type{SliceType: &SliceType{Elem: elem}}, nil
 	}
 
 	lit, ok := arrayType.Len.(*ast.BasicLit)
 	if !ok {
-		panic(fmt.Errorf("unrecognized array length: %v", arrayType.Len))
+		return Type{}, fmt.Errorf("unrecognized array length: %v", arrayType.Len)
 	}
 	lenn, ok := parseInt(lit.Value)
 	if !ok {
-		panic(fmt.Errorf("unrecognized array length: %v", lit.Value))
+		return Type{}, fmt.Errorf("unrecognized array length: %v", lit.Value)
 	}
 
-	return Type{ArrayType: &ArrayType{
-		Len:  lenn,
-		Elem: f.generateTypeFromExpr(arrayType.Elt, packagePath, importMap),
-	}}
+	elem, err := f.generateTypeFromExpr(arrayType.Elt, packagePath, importMap)
+	if err != nil {
+		return Type{}, err
+	}
+
+	return Type{ArrayType: &ArrayType{Len: lenn, Elem: elem}}, nil
 }
 
-func (f *astTypeGenerator) generateTypeFromFuncType(funcType *ast.FuncType, packagePath string, importMap map[string]string) FuncType {
-	params, isVariadic := f.generateTypeFromFieldList(
+func (f *astTypeGenerator) generateTypeFromFuncType(
+	funcType *ast.FuncType,
+	packagePath string,
+	importMap map[string]string,
+) (FuncType, error) {
+	params, isVariadic, err := f.generateTypeFromFieldList(
 		funcType.Params,
 		f.getInputNamesFromAst(funcType.Params.List),
 		packagePath,
 		importMap,
 	)
+	if err != nil {
+		return FuncType{}, err
+	}
 
 	var results []TypeField = nil
 	if funcType.Results != nil {
-		results, _ = f.generateTypeFromFieldList(
+		if results, _, err = f.generateTypeFromFieldList(
 			funcType.Results,
 			f.getOutputNamesFromAst(funcType.Results.List),
 			packagePath,
 			importMap,
-		)
+		); err != nil {
+			return FuncType{}, err
+		}
 	}
+
 	return FuncType{
 		Inputs:     params,
 		Outputs:    results,
 		IsVariadic: isVariadic,
-	}
+	}, nil
 }
 
 func (f *astTypeGenerator) generateTypeFromFieldList(
@@ -298,9 +357,9 @@ func (f *astTypeGenerator) generateTypeFromFieldList(
 	names []string,
 	packagePath string,
 	importMap map[string]string,
-) (types []TypeField, isVariadic bool) {
+) (types []TypeField, isVariadic bool, err error) {
 	if fields == nil {
-		return nil, false
+		return nil, false, nil
 	}
 
 	types = make([]TypeField, 0, fields.NumFields())
@@ -311,7 +370,11 @@ func (f *astTypeGenerator) generateTypeFromFieldList(
 			isVariadic = true
 			typExpr = v.Elt
 		}
-		typ := f.generateTypeFromExpr(typExpr, packagePath, importMap)
+
+		typ, err := f.generateTypeFromExpr(typExpr, packagePath, importMap)
+		if err != nil {
+			return nil, false, err
+		}
 
 		if len(field.Names) == 0 {
 			types = append(types, TypeField{
@@ -366,29 +429,37 @@ func (f *astTypeGenerator) generateTypeFromMapType(
 	mapType *ast.MapType,
 	packagePath string,
 	importMap map[string]string,
-) MapType {
-	keyDef := f.generateTypeFromExpr(mapType.Key, packagePath, importMap)
-	valDef := f.generateTypeFromExpr(mapType.Value, packagePath, importMap)
-	return MapType{
-		Key:  keyDef,
-		Elem: valDef,
+) (MapType, error) {
+	keyDef, err := f.generateTypeFromExpr(mapType.Key, packagePath, importMap)
+	if err != nil {
+		return MapType{}, err
 	}
+
+	valDef, err := f.generateTypeFromExpr(mapType.Value, packagePath, importMap)
+	if err != nil {
+		return MapType{}, err
+	}
+
+	return MapType{Key: keyDef, Elem: valDef}, nil
 }
 
 func (f *astTypeGenerator) generateTypeFromChanType(
 	chanType *ast.ChanType,
 	packagePath string,
 	importMap map[string]string,
-) ChanType {
-	c := f.generateTypeFromExpr(chanType.Value, packagePath, importMap)
+) (ChanType, error) {
+	c, err := f.generateTypeFromExpr(chanType.Value, packagePath, importMap)
+	if err != nil {
+		return ChanType{}, err
+	}
 
 	switch chanType.Dir {
 	case ast.RECV:
-		return ChanType{Dir: ChanTypeDirRecv, Elem: c}
+		return ChanType{Dir: ChanTypeDirRecv, Elem: c}, nil
 	case ast.SEND:
-		return ChanType{Dir: ChanTypeDirSend, Elem: c}
+		return ChanType{Dir: ChanTypeDirSend, Elem: c}, nil
 	default:
-		return ChanType{Dir: ChanTypeDirBoth, Elem: c}
+		return ChanType{Dir: ChanTypeDirBoth, Elem: c}, nil
 	}
 }
 
@@ -396,34 +467,36 @@ func (f *astTypeGenerator) generateTypeFromStructType(
 	structType *ast.StructType,
 	packagePath string,
 	importMap map[string]string,
-) StructType {
+) (StructType, error) {
 	if structType.Fields == nil {
-		return StructType{Fields: nil}
+		return StructType{Fields: nil}, nil
 	}
 
 	fields := make([]TypeField, 0, structType.Fields.NumFields())
 	for _, field := range structType.Fields.List {
 		for _, name := range field.Names {
-			fields = append(
-				fields,
-				TypeField{
-					Name: name.String(),
-					Type: f.generateTypeFromExpr(field.Type, packagePath, importMap),
-				},
-			)
+			fieldType, err := f.generateTypeFromExpr(field.Type, packagePath, importMap)
+			if err != nil {
+				return StructType{}, err
+			}
+
+			fields = append(fields, TypeField{
+				Name: name.String(),
+				Type: fieldType,
+			})
 		}
 	}
 
-	return StructType{Fields: fields}
+	return StructType{Fields: fields}, nil
 }
 
 func (f *astTypeGenerator) generateTypeFromInterfaceType(
 	interfaceType *ast.InterfaceType,
 	packagePath string,
 	importMap map[string]string,
-) InterfaceType {
+) (InterfaceType, error) {
 	if interfaceType.Methods == nil {
-		return InterfaceType{Methods: nil}
+		return InterfaceType{Methods: nil}, nil
 	}
 
 	nMethod := interfaceType.Methods.NumFields()
@@ -432,20 +505,27 @@ func (f *astTypeGenerator) generateTypeFromInterfaceType(
 		switch t := field.Type.(type) {
 		case *ast.FuncType:
 			name := field.Names[0].String()
-			funcType := field.Type.(*ast.FuncType)
-			methods = append(methods, InterfaceTypeMethod{
-				Name: name,
-				Func: f.generateTypeFromFuncType(funcType, packagePath, importMap),
-			})
+			funcTypeAST := field.Type.(*ast.FuncType)
+			funcType, err := f.generateTypeFromFuncType(funcTypeAST, packagePath, importMap)
+			if err != nil {
+				return InterfaceType{}, err
+			}
+			methods = append(methods, InterfaceTypeMethod{Name: name, Func: funcType})
 		case *ast.Ident:
-			innerInterface := f.GenerateTypesFromSpecs(TypeSpec{PackagePath: packagePath, Name: t.Name})
+			innerInterface, err := f.GenerateTypesFromSpecs(TypeSpec{PackagePath: packagePath, Name: t.Name})
+			if err != nil {
+				return InterfaceType{}, err
+			}
 			methods = append(methods, innerInterface[0].InterfaceType.Methods...)
 		case *ast.SelectorExpr:
 			x, sel := t.X.(*ast.Ident).Name, t.Sel.Name
-			innerInterface := f.GenerateTypesFromSpecs(TypeSpec{PackagePath: importMap[x], Name: sel})
+			innerInterface, err := f.GenerateTypesFromSpecs(TypeSpec{PackagePath: importMap[x], Name: sel})
+			if err != nil {
+				return InterfaceType{}, err
+			}
 			methods = append(methods, innerInterface[0].InterfaceType.Methods...)
 		}
 	}
 
-	return InterfaceType{Methods: methods}
+	return InterfaceType{Methods: methods}, nil
 }

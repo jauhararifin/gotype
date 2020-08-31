@@ -20,73 +20,95 @@ type defaultSourceFinder struct {
 	cache map[string][]string
 }
 
-func (s *defaultSourceFinder) GetPackageSourceFiles(packagePath string) []string {
+func (s *defaultSourceFinder) GetPackageSourceFiles(packagePath string) ([]string, error) {
 	if s.cache == nil {
 		s.cache = make(map[string][]string)
 	}
 
 	if sourceFiles, ok := s.cache[packagePath]; ok {
-		return sourceFiles
+		return sourceFiles, nil
 	}
 
-	packageDir := s.findPackageDir(packagePath)
-	goSources := s.getGoSourcesInsideDir(packageDir)
+	packageDir, err := s.findPackageDir(packagePath)
+	if err != nil {
+		return nil, err
+	}
+
+	goSources, err := s.getGoSourcesInsideDir(packageDir)
+	if err != nil {
+		return nil, err
+	}
 	s.cache[packagePath] = goSources
 
-	return goSources
+	return goSources, nil
 }
 
-func (s *defaultSourceFinder) findPackageDir(packagePath string) string {
-	moduleFile, goModFilePath := s.findModuleFile()
+func (s *defaultSourceFinder) findPackageDir(packagePath string) (string, error) {
+	moduleFile, goModFilePath, err := s.findModuleFile()
+	if err != nil {
+		return "", err
+	}
+
 	if packageDir, ok := s.findPackageDirByModulePath(
 		packagePath,
 		moduleFile.Module.Mod.Path,
 		filepath.Dir(goModFilePath),
 	); ok {
-		return packageDir
+		return packageDir, nil
 	}
 
 	for _, req := range moduleFile.Require {
-		modPath := s.findPackagePathByVersion(req.Mod)
+		modPath, err := s.findPackagePathByVersion(req.Mod)
+		if err != nil {
+			return "", err
+		}
+
 		if packageDir, ok := s.findPackageDirByModulePath(packagePath, req.Mod.Path, modPath); ok {
-			return packageDir
+			return packageDir, nil
 		}
 	}
 
-	modPath := s.findPackagePathByVersion(module.Version{})
-	if packageDir, ok := s.findPackageDirByModulePath(packagePath, "", modPath); ok {
-		return packageDir
+	modPath, err := s.findPackagePathByVersion(module.Version{})
+	if err != nil {
+		return "", err
 	}
 
-	panic(fmt.Errorf("package %s cannot be found in go.mod file", packagePath))
+	if packageDir, ok := s.findPackageDirByModulePath(packagePath, "", modPath); ok {
+		return packageDir, nil
+	}
+
+	return "", fmt.Errorf("package %s cannot be found in go.mod file", packagePath)
 }
 
-func (s *defaultSourceFinder) findModuleFile() (*modfile.File, string) {
-	goModFilePath := s.findGoModFile()
+func (s *defaultSourceFinder) findModuleFile() (*modfile.File, string, error) {
+	goModFilePath, err := s.findGoModFile()
+	if err != nil {
+		return nil, "", err
+	}
 
 	goModFile, err := os.Open(goModFilePath)
 	if err != nil {
-		panic(fmt.Errorf("cannot open go.mod file: %w", err))
+		return nil, "", fmt.Errorf("cannot open go.mod file: %w", err)
 	}
 	defer goModFile.Close()
 
 	goModBytes, err := ioutil.ReadAll(goModFile)
 	if err != nil {
-		panic(fmt.Errorf("cannot read go.mod file: %w", err))
+		return nil, "", fmt.Errorf("cannot read go.mod file: %w", err)
 	}
 
 	moduleFile, err := modfile.Parse("go.mod", goModBytes, nil)
 	if err != nil {
-		panic(fmt.Errorf("cannot parse go.mod file: %w", err))
+		return nil, "", fmt.Errorf("cannot parse go.mod file: %w", err)
 	}
 
-	return moduleFile, goModFilePath
+	return moduleFile, goModFilePath, nil
 }
 
-func (s *defaultSourceFinder) findGoModFile() string {
+func (s *defaultSourceFinder) findGoModFile() (string, error) {
 	wd, err := os.Getwd()
 	if err != nil {
-		panic(fmt.Errorf("cannot get current working dir: %w", err))
+		return "", fmt.Errorf("cannot get current working dir: %w", err)
 	}
 
 	maxDepth := 15
@@ -100,10 +122,10 @@ func (s *defaultSourceFinder) findGoModFile() string {
 			continue
 		}
 
-		return goModPath
+		return goModPath, nil
 	}
 
-	panic(fmt.Errorf("no go.mod file found"))
+	return "", fmt.Errorf("no go.mod file found")
 }
 
 func (*defaultSourceFinder) findPackageDirByModulePath(
@@ -117,7 +139,7 @@ func (*defaultSourceFinder) findPackageDirByModulePath(
 	return filepath.Join(moduleDir, targetPackagePath[len(modulePath):]), true
 }
 
-func (s *defaultSourceFinder) findPackagePathByVersion(modVer module.Version) string {
+func (s *defaultSourceFinder) findPackagePathByVersion(modVer module.Version) (string, error) {
 	lookupDir := make([]string, 0)
 
 	if gohome, ok := os.LookupEnv("GOHOME"); ok {
@@ -127,7 +149,7 @@ func (s *defaultSourceFinder) findPackagePathByVersion(modVer module.Version) st
 	// TODO (jauhararifin): this is for unix-based OS only.
 	homedir, err := os.UserHomeDir()
 	if err != nil {
-		panic(fmt.Errorf("cannot get user home dir: %w", err))
+		return "", fmt.Errorf("cannot get user home dir: %w", err)
 	}
 	lookupDir = append(lookupDir, filepath.Join(homedir, "go", "pkg", "mod", modVer.Path+"@"+modVer.Version))
 
@@ -146,11 +168,11 @@ func (s *defaultSourceFinder) findPackagePathByVersion(modVer module.Version) st
 
 	for _, modulePath := range lookupDir {
 		if dir, ok := s.findPackagePathFromCandidatePath(modulePath); ok {
-			return dir
+			return dir, nil
 		}
 	}
 
-	panic(fmt.Errorf("cannot find module %s", modVer.String()))
+	return "", fmt.Errorf("cannot find module %s", modVer.String())
 }
 
 func (*defaultSourceFinder) findInstalledGoDir() (string, error) {
@@ -180,7 +202,7 @@ func (*defaultSourceFinder) findPackagePathFromCandidatePath(modulePath string) 
 	return modulePath, true
 }
 
-func (*defaultSourceFinder) getGoSourcesInsideDir(dir string) []string {
+func (*defaultSourceFinder) getGoSourcesInsideDir(dir string) ([]string, error) {
 	goSources := make([]string, 0)
 	if err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if path == dir {
@@ -188,7 +210,7 @@ func (*defaultSourceFinder) getGoSourcesInsideDir(dir string) []string {
 		}
 
 		if err != nil {
-			panic(fmt.Errorf("got error when listing file: %w", err))
+			return fmt.Errorf("got error when listing file: %w", err)
 		}
 
 		if info.IsDir() {
@@ -201,7 +223,7 @@ func (*defaultSourceFinder) getGoSourcesInsideDir(dir string) []string {
 
 		return nil
 	}); err != nil {
-		panic(fmt.Errorf("error while traversing the directories: %w", err))
+		return nil, fmt.Errorf("error while traversing the directories: %w", err)
 	}
-	return goSources
+	return goSources, nil
 }
