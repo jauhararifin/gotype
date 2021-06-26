@@ -6,17 +6,17 @@ package gotype
 // the internal representation of Golang's interface.
 //
 // There are 10 kind of Golang's type supported:
-// - PrimitiveType: represents bool, byte, int, int8, int16, int64, uint, uint16, uint32, uint64, uintptr, float32,
+//   - PrimitiveType: represents bool, byte, int, int8, int16, int64, uint, uint16, uint32, uint64, uintptr, float32,
 //                  float64, complex64, complex128, string, and error.
-// - QualType: represents a pair of Golang's type identified by package path and the type's name within it's package.
-// - ChanType: represents Golang's channel.
-// - SliceType: represents Golang's slice.
-// - PtrType: represents Golang's pointer.
-// - ArrayType: represents Golang's array.
-// - MapType: represents Golang's map.
-// - FuncType: represents Golang's function.
-// - StructType: represents Golang's struct.
-// - InterfaceType: represents Golang's interface.
+//   - QualType: represents a pair of Golang's type identified by package path and the type's name within it's package.
+//   - ChanType: represents Golang's channel.
+//   - SliceType: represents Golang's slice.
+//   - PtrType: represents Golang's pointer.
+//   - ArrayType: represents Golang's array.
+//   - MapType: represents Golang's map.
+//   - FuncType: represents Golang's function.
+//   - StructType: represents Golang's struct.
+//   - InterfaceType: represents Golang's interface.
 //
 // Type contains a bunch of pointers which represents the information of each type. There is only one non-null pointer
 // inside Type. For example, if the Type represents a Golang's map, the `MapType` field will be a non-null pointer and
@@ -194,9 +194,9 @@ type StructType struct {
 }
 
 // TypeField can represent several things:
-// - A single field inside a Golang's struct.
-// - A single input parameter of a Golang's function/method.
-// - A single output parameter of a Golang's function/method.
+//   - A single field inside a Golang's struct.
+//   - A single input parameter of a Golang's function/method.
+//   - A single output parameter of a Golang's function/method.
 type TypeField struct {
 	// Name represents the struct's field name/function's input parameter name/function's output parameter name.
 	Name string
@@ -232,64 +232,64 @@ type InterfaceType struct {
 	Methods []InterfaceTypeMethod
 }
 
-// Type() converts the PrimitiveType to a Type.
+// Type converts the PrimitiveType to a Type.
 func (t PrimitiveType) Type() Type { return Type{PrimitiveType: &t} }
 
-// Type() converts the QualType to a Type.
+// Type converts the QualType to a Type.
 func (t QualType) Type() Type { return Type{QualType: &t} }
 
-// Type() converts the ChanType to a Type.
+// Type converts the ChanType to a Type.
 func (t ChanType) Type() Type { return Type{ChanType: &t} }
 
-// Type() converts the SliceType to a Type.
+// Type converts the SliceType to a Type.
 func (t SliceType) Type() Type { return Type{SliceType: &t} }
 
-// Type() converts the PtrType to a Type.
+// Type converts the PtrType to a Type.
 func (t PtrType) Type() Type { return Type{PtrType: &t} }
 
-// Type() converts the ArrayType to a Type.
+// Type converts the ArrayType to a Type.
 func (t ArrayType) Type() Type { return Type{ArrayType: &t} }
 
-// Type() converts the MapType to a Type.
+// Type converts the MapType to a Type.
 func (t MapType) Type() Type { return Type{MapType: &t} }
 
-// Type() converts the FuncType to a Type.
+// Type converts the FuncType to a Type.
 func (t FuncType) Type() Type { return Type{FuncType: &t} }
 
-// Type() converts the StructType to a Type.
+// Type converts the StructType to a Type.
 func (t StructType) Type() Type { return Type{StructType: &t} }
 
-// Type() converts the InterfaceType to a Type.
+// Type converts the InterfaceType to a Type.
 func (t InterfaceType) Type() Type { return Type{InterfaceType: &t} }
 
-// IsPrimitive() returns true if the Type is a PrimitiveType.
+// IsPrimitive returns true if the Type is a PrimitiveType.
 func (t Type) IsPrimitive() bool { return t.PrimitiveType != nil }
 
-// IsQual() returns true if the Type is a QualType.
+// IsQual returns true if the Type is a QualType.
 func (t Type) IsQual() bool { return t.QualType != nil }
 
-// IsChan() returns true if the Type is a ChanType.
+// IsChan returns true if the Type is a ChanType.
 func (t Type) IsChan() bool { return t.ChanType != nil }
 
-// IsSlice() returns true if the Type is a SliceType.
+// IsSlice returns true if the Type is a SliceType.
 func (t Type) IsSlice() bool { return t.SliceType != nil }
 
-// IsPtr() returns true if the Type is a PtrType.
+// IsPtr returns true if the Type is a PtrType.
 func (t Type) IsPtr() bool { return t.PtrType != nil }
 
-// IsArray() returns true if the Type is a ArrayType.
+// IsArray returns true if the Type is a ArrayType.
 func (t Type) IsArray() bool { return t.ArrayType != nil }
 
-// IsMap() returns true if the Type is a MapType.
+// IsMap returns true if the Type is a MapType.
 func (t Type) IsMap() bool { return t.MapType != nil }
 
-// IsFunc() returns true if the Type is a FuncType.
+// IsFunc returns true if the Type is a FuncType.
 func (t Type) IsFunc() bool { return t.FuncType != nil }
 
-// IsStruct() returns true if the Type is a StructType.
+// IsStruct returns true if the Type is a StructType.
 func (t Type) IsStruct() bool { return t.StructType != nil }
 
-// IsInterface() returns true if the Type is a InterfaceType.
+// IsInterface returns true if the Type is a InterfaceType.
 func (t Type) IsInterface() bool { return t.InterfaceType != nil }
 
 // TypeSpec represents a combination of package path and the type's name which can uniquely identified Golang's type.
